@@ -1,95 +1,132 @@
 # Intune.CertificatePolicy
 
-PowerShell script to bulk-create **Intune Trusted Certificate profiles** from Root CA and Subordinate CA certificate files via the Microsoft Graph API.
+PowerShell toolkit to **deploy** and **verify** Intune Trusted Certificate profiles for Root and Subordinate CA certificates using the Microsoft Graph API.
 
-## Scripts
+> Manage your PKI trust chain in Intune at scale — import certificates with a consistent naming convention and audit what's already deployed.
 
-| Script | Purpose |
+## Overview
+
+| Script | Description |
 |---|---|
-| `New-IntuneCertificatePolicy.ps1` | Bulk-create Intune Trusted Certificate profiles |
-| `Test-IntuneCertificatePolicy.ps1` | Verify if local certificates are already deployed in Intune |
+| [`New-IntuneCertificatePolicy.ps1`](#new-intunecertificatepolicyps1) | Bulk-create Intune Trusted Certificate profiles from `.cer` / `.crt` files |
+| [`Test-IntuneCertificatePolicy.ps1`](#test-intunecertificatepolicyps1) | Audit local certificates against deployed Intune profiles (content-based matching) |
 
-## Features
+### Typical workflow
 
-### New-IntuneCertificatePolicy
-
-- 📂 Reads `.cer` and `.crt` certificates from Root CA and Subordinate CA folders
-- 🏷️ Automatic naming convention: `{Prefix} - {CA Name from Subject CN}`
-- 🔒 Root CAs → `computerCertStoreRoot`, Subordinate CAs → `computerCertStoreIntermediate`
-- 🔍 Duplicate detection — skips profiles that already exist in Intune
-- 🧪 **Dry-run mode** to preview changes without creating anything
-- 🔑 Interactive authentication via Microsoft Graph (`Connect-MgGraph`)
-
-### Test-IntuneCertificatePolicy
-
-- 🔎 Scans local certificate files and compares against all Intune Trusted Certificate profiles
-- 🧬 **Content-based matching** — compares raw certificate bytes (thumbprint + byte-for-byte fallback)
-- ✅ Reports which certificates are **deployed** and which are **missing**
-- ⏭️ Optionally skips expired certificates (use `-IncludeExpired` to include them)
-- 📊 Summary report with actionable output
+```
+1. Collect Root & Subordinate CA certificates (.cer / .crt)
+2. Run Test-IntuneCertificatePolicy  →  identify what's missing
+3. Run New-IntuneCertificatePolicy   →  deploy missing certificates (with -DryRun first)
+4. Run Test-IntuneCertificatePolicy  →  confirm everything is deployed ✅
+```
 
 ## Prerequisites
 
-- PowerShell 7+
-- [Microsoft Graph PowerShell SDK](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
+- **PowerShell 7+**
+- [**Microsoft Graph PowerShell SDK**](https://learn.microsoft.com/en-us/powershell/microsoftgraph/installation)
 
 ```powershell
 Install-Module Microsoft.Graph -Scope CurrentUser
 ```
 
-## Usage
-
-### Dry Run (preview only)
+## Quick start
 
 ```powershell
-.\New-IntuneCertificatePolicy.ps1 `
-    -Prefix "CORP" `
-    -RootCACertsPath ".\Certificates\RootCAs" `
-    -SubordinateCACertsPath ".\Certificates\SubCAs" `
+# 1. Check which certificates are already deployed
+.\Test-IntuneCertificatePolicy.ps1 -CertificatePaths ".\RootCAs", ".\SubCAs"
+
+# 2. Preview what would be created
+.\New-IntuneCertificatePolicy.ps1 -Prefix "CORP" `
+    -RootCACertsPath ".\RootCAs" `
+    -SubordinateCACertsPath ".\SubCAs" `
+    -DryRun
+
+# 3. Create the profiles
+.\New-IntuneCertificatePolicy.ps1 -Prefix "CORP" `
+    -RootCACertsPath ".\RootCAs" `
+    -SubordinateCACertsPath ".\SubCAs"
+```
+
+---
+
+## New-IntuneCertificatePolicy.ps1
+
+Reads certificates from Root CA and Subordinate CA folders, extracts the CA name from the certificate subject (CN), and creates Intune Trusted Certificate profiles with a standardized naming convention.
+
+### Features
+
+- 📂 Reads `.cer` and `.crt` certificate files
+- 🏷️ Naming convention: **`{Prefix} - {CA Name from Subject CN}`**
+- 🔒 Root CAs → `computerCertStoreRoot` · Subordinate CAs → `computerCertStoreIntermediate`
+- 🔍 Automatic duplicate detection — skips profiles that already exist
+- 🧪 **Dry-run mode** (`-DryRun`) to preview without changes
+
+### Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `-Prefix` | ✅ | Naming prefix for all Intune policies (e.g. `CORP`, `ISP`) |
+| `-RootCACertsPath` | ✅ | Folder containing Root CA certificate files |
+| `-SubordinateCACertsPath` | ✅ | Folder containing Subordinate CA certificate files |
+| `-DryRun` | ❌ | Preview mode — no changes are made |
+
+### Example
+
+```powershell
+.\New-IntuneCertificatePolicy.ps1 -Prefix "CORP" `
+    -RootCACertsPath ".\RootCAs" `
+    -SubordinateCACertsPath ".\SubCAs" `
     -DryRun
 ```
-
-### Create profiles
-
-```powershell
-.\New-IntuneCertificatePolicy.ps1 `
-    -Prefix "CORP" `
-    -RootCACertsPath ".\Certificates\RootCAs" `
-    -SubordinateCACertsPath ".\Certificates\SubCAs"
-```
-
-### Example output
 
 ```
 ========================================
  Intune Certificate Policy Creator
 ========================================
+[DRY RUN] No changes will be made.
 
-Processing Root CA certificates from: .\Certificates\RootCAs
+Processing Root CA certificates from: .\RootCAs
 ------------------------------------------------------------
   Certificate : ContosoRootCA.cer
   CA Name     : Contoso Root CA - Root 01
   Policy Name : CORP - Contoso Root CA - Root 01
   Thumbprint  : B532ACDB5BC16795449F3D61F158F89811BB4CF6
   Store       : computerCertStoreRoot
-  Status      : CREATED (ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+  Status      : DRY RUN - Would create
 ```
 
-### Verify deployed certificates
+---
+
+## Test-IntuneCertificatePolicy.ps1
+
+Scans local certificate files and verifies whether they are already deployed as Intune Trusted Certificate profiles. Uses **content-based matching** to ensure accuracy regardless of file or policy name.
+
+### Features
+
+- 🔎 Compares local certificates against all Intune Trusted Certificate profiles
+- 🧬 **Two-stage matching**: thumbprint match (fast) → byte-for-byte fallback (exact)
+- ✅ Clear status per certificate: **DEPLOYED** or **MISSING**
+- ⏭️ Skips expired certificates by default (use `-IncludeExpired` to include)
+- 📊 Summary report with actionable output
+
+### Parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `-CertificatePaths` | ✅ | One or more folders containing certificates to verify |
+| `-IncludeExpired` | ❌ | Include expired certificates in the report |
+
+### Example
 
 ```powershell
 .\Test-IntuneCertificatePolicy.ps1 -CertificatePaths ".\RootCAs", ".\SubCAs"
 ```
 
-### Verify including expired certificates
-
-```powershell
-.\Test-IntuneCertificatePolicy.ps1 -CertificatePaths ".\RootCAs" -IncludeExpired
 ```
+============================================
+ Intune Certificate Policy Verification
+============================================
 
-### Example verification output
-
-```
 Scanning certificates in: .\RootCAs
 ------------------------------------------------------------
   ✅ ContosoRootCA.cer
@@ -106,33 +143,21 @@ Scanning certificates in: .\RootCAs
 Total: 2 | Deployed: 1 | Missing: 1 | Errors: 0
 ```
 
-## Parameters
+---
 
-### New-IntuneCertificatePolicy
+## Required permissions
 
-| Parameter | Required | Description |
+| Script | Microsoft Graph Permission | Access |
 |---|---|---|
-| `-Prefix` | ✅ | Naming prefix for all Intune policies |
-| `-RootCACertsPath` | ✅ | Folder containing Root CA certificates |
-| `-SubordinateCACertsPath` | ✅ | Folder containing Subordinate CA certificates |
-| `-DryRun` | ❌ | Preview mode — no changes are made |
+| `New-IntuneCertificatePolicy.ps1` | `DeviceManagementConfiguration.ReadWrite.All` | Read + Write |
+| `Test-IntuneCertificatePolicy.ps1` | `DeviceManagementConfiguration.Read.All` | Read only |
 
-### Test-IntuneCertificatePolicy
+The interactive login (`Connect-MgGraph`) will prompt for consent if not already granted.
 
-| Parameter | Required | Description |
-|---|---|---|
-| `-CertificatePaths` | ✅ | One or more folders containing certificates to verify |
-| `-IncludeExpired` | ❌ | Include expired certificates in the check |
+## Contributing
 
-## Required Permissions
-
-| Script | Permission |
-|---|---|
-| `New-IntuneCertificatePolicy.ps1` | `DeviceManagementConfiguration.ReadWrite.All` |
-| `Test-IntuneCertificatePolicy.ps1` | `DeviceManagementConfiguration.Read.All` |
-
-The interactive login will prompt for consent if not already granted.
+Contributions are welcome! Feel free to open an issue or submit a pull request.
 
 ## License
 
-[MIT](LICENSE)
+This project is licensed under the [MIT License](LICENSE).
