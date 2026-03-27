@@ -1,0 +1,21 @@
+# Certificates - never commit real certs
+*.cer
+*.crt
+*.pem
+*.der
+*.pfx
+*.p12
+
+# Test folders
+TestCerts/
+
+# PowerShell
+*.ps1xml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
